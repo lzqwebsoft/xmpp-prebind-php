@@ -6,10 +6,7 @@
  * @author Michael Weibel <michael.weibel@amiadogroup.com>
  */
 
-/**
- * FirePHP for debugging
- */
-include 'FirePHP/fb.php';
+require 'Log/BaseLog.php';
 
 /**
  * PEAR Auth_SASL
@@ -42,13 +39,14 @@ class XmppPrebind {
 	protected $boshUri    = '';
 	protected $resource   = '';
 
-	protected $debug = false;
+	// Log for debug
+	protected $loger = null;
+
 	/**
-	 * FirePHP Instance
-	 *
-	 * @var FirePHP
+	 * No reply to success challenge response. when SASL authenticate successed.
+	 * @see https://xmpp.org/extensions/xep-0206.html
 	 */
-	protected $firePhp = null;
+	protected $replyChallenge = false;
 
 	protected $useGzip = false;
 	protected $useSsl = false;
@@ -91,19 +89,17 @@ class XmppPrebind {
 	 * @param string $boshUri    Full URI to the http-bind
 	 * @param string $resource   Resource identifier
 	 * @param bool   $useSsl     Use SSL (not working yet, TODO)
-	 * @param bool   $debug      Enable debug
+	 * @param bool   $loger      Instance of BaseLog class 
 	 */
-	public function __construct($jabberHost, $boshUri, $resource, $useSsl = false, $debug = false) {
+	public function __construct($jabberHost, $boshUri, $resource, $useSsl = false, $loger = null) {
 		$this->jabberHost = $jabberHost;
 		$this->boshUri    = $boshUri;
 		$this->resource   = $resource;
 
 		$this->useSsl = $useSsl;
 
-		$this->debug = $debug;
-		if ($this->debug === true) {
-			$this->firePhp = FirePHP::getInstance(true);
-			$this->firePhp->setEnabled(true);
+		if ($loger instanceof BaseLog) {
+			$this->loger = $loger;
 		}
 
 		/* TODO: Not working
@@ -135,7 +131,7 @@ class XmppPrebind {
 	 * @param string $route Route
 	 */
 	public function connect($username, $password, $route = false) {
-		$this->jid      = $username . '@' . $this->jabberHost;
+		$this->jid = $username . '@' . $this->jabberHost;
 
 		if($this->resource) {
 			$this->jid .= '/' . $this->resource;
@@ -263,8 +259,8 @@ class XmppPrebind {
 	 * @param string $label
 	 */
 	protected function debug($msg, $label = null) {
-		if ($this->firePhp) {
-			$this->firePhp->log($msg, $label);
+		if ($this->loger) {
+			$this->loger->log($msg, $label);
 		}
 	}
 
@@ -447,9 +443,13 @@ class XmppPrebind {
 		$body->appendChild($response);
 
 
-		$challengeResponse = $this->send($domDocument->saveXML());
-
-		return $this->replyToChallengeResponse($challengeResponse);
+		if($this->replyChallenge) {
+			$challengeResponse = $this->send($domDocument->saveXML());
+			return $this->replyToChallengeResponse($challengeResponse);
+		} else {
+			return $domDocument->saveXML();
+		}
+		
 	}
 
 	/**
@@ -475,14 +475,20 @@ class XmppPrebind {
 
 		$body->appendChild($response);
 
-		$challengeResponse = $this->send($domDocument->saveXML());
-
-		return $this->replyToChallengeResponse($challengeResponse);
+		if($this->replyChallenge) {
+			$challengeResponse = $this->send($domDocument->saveXML());
+		    return $this->replyToChallengeResponse($challengeResponse);
+		} else  {
+			return $domDocument->saveXML();
+		}
+		
 	}
 
 	/**
 	 * CRAM-MD5 and DIGEST-MD5 reply with an additional challenge response which must be replied to.
 	 * After this additional reply, the server should reply with "success".
+	 * But at XMPP document [XEP-0206: XMPP Over BOSH] not reply step.
+	 * @link https://xmpp.org/extensions/xep-0206.html
 	 */
 	protected function replyToChallengeResponse($challengeResponse) {
 		$body = self::getBodyFromXml($challengeResponse);
@@ -508,6 +514,8 @@ class XmppPrebind {
 	 * @return string Response
 	 */
 	protected function send($xml) {
+		// Remove xml declaration
+		$xml = preg_replace( "/<\?xml.+?\?>\W?/", "", $xml);
 		$ch = curl_init($this->boshUri);
 		curl_setopt($ch, CURLOPT_HEADER, 0);
 		curl_setopt($ch, CURLOPT_POST, 1);
@@ -522,6 +530,10 @@ class XmppPrebind {
 
 		curl_setopt($ch, CURLOPT_VERBOSE, 0);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+
+		// Disable SSL check
+		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
 
 		$response = curl_exec($ch);
 
