@@ -11,7 +11,7 @@ require 'Log/BaseLog.php';
 /**
  * PEAR Auth_SASL
  */
-require 'Auth/SASL.php';
+require_once 'Auth/SASL.php';
 
 /**
  * XMPP Library for connecting to jabber server & receiving sid and rid
